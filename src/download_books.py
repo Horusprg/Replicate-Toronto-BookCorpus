@@ -3,6 +3,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from itertools import count, cycle, repeat
 from pathlib import Path
+import random
 
 from cachecontrol import CacheControl
 from requests import Session
@@ -19,10 +20,13 @@ from utils import (
     write,
 )
 
-NB_RETRIES = 3
+NB_RETRIES = 6
 
+def fetch_book(url, session, headers, proxy):
+    return get(url, session=session, headers=headers, proxies=proxy)
 
-def main():
+def main(subsize):
+    random.seed(47)
     # create dirs
     root_dir = Path(__file__).resolve().parents[1]
     data_dir = root_dir / "data"
@@ -31,7 +35,12 @@ def main():
 
     # load book_download_urls
     book_download_urls = read(root_dir / "data" / "book_urls.txt").splitlines()
+    
+    # reduce the urls
+    subsample_size = int(subsize*len(book_download_urls))
+    book_download_urls = random.sample(book_download_urls, subsample_size)
 
+    total_books = len(book_download_urls)
     # remove any books that have already been downloaded
     book_download_urls = [
         url
@@ -54,7 +63,7 @@ def main():
 
         # get the books (concurrently)
         with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-            for nb_retry in count(1):
+            for nb_retry in count(2):
                 # break if all book_download_urls successful
                 if not book_download_urls:
                     break
@@ -62,7 +71,7 @@ def main():
                 # break if max number of retries exceeded
                 if nb_retry > NB_RETRIES:
                     print(
-                        f"Could not download {len(book_download_urls)} books after {NB_RETRIES} retries."
+                        f"Could not download {len(book_download_urls)} books from {total_books} after {NB_RETRIES} retries."
                     )
                     break
 
@@ -73,16 +82,8 @@ def main():
                 book_responses = list(
                     tqdm(
                         executor.map(
-                            lambda url, session_, headers_, proxies_: get(
-                                url,
-                                session=session_,
-                                headers=headers_,
-                                proxies=proxies_,
-                            ),
-                            book_download_urls,
-                            repeat(session),
-                            cycle(headers),
-                            cycle(proxies) if proxies is not None else repeat(None),
+                            lambda args: fetch_book(*args),  # Use lambda to unpack arguments
+                            zip(book_download_urls, repeat(session), cycle(headers), cycle(proxies) if proxies else repeat(None)),
                         ),
                         total=len(book_download_urls),
                         desc="Getting books",
@@ -112,4 +113,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    subsize = 0.4
+    main(subsize)

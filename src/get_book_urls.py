@@ -15,17 +15,18 @@ from utils import dump, get, get_headers, mkdirs
 NB_RETRIES = 3
 
 
-def main():
+def fetch_url(url, session, headers):
+    return get(url, session, headers)
+
+
+def main(url):
     # create dirs
     root_dir = Path(__file__).resolve().parents[1]
     dump_dir = root_dir / "dump"
     mkdirs(dump_dir)
 
     # determine search_urls (should be roughly 0.9B words in total)
-    search_urls = [
-        f"https://www.smashwords.com/books/category/1/downloads/0/free/medium/{i}"
-        for i in range(0, 30000 + 1, 20)
-    ]
+    search_urls = [f"{url}/{i}" for i in range(0, 30000 + 1, 20)]
 
     # get headers (user-agents)
     headers = get_headers(root_dir / "data" / "user_agents.txt")
@@ -56,7 +57,10 @@ def main():
                 # get the search_responses
                 search_responses = list(
                     tqdm(
-                        executor.map(get, search_urls, repeat(session), cycle(headers)),
+                        executor.map(
+                            lambda args: fetch_url(*args),
+                            zip(search_urls, repeat(session), cycle(headers)),
+                        ),
                         total=len(search_urls),
                         desc="Getting searches",
                     )
@@ -72,20 +76,23 @@ def main():
                             search_tree = html.fromstring(search_r.content)
                             search_tree.make_links_absolute(search_r.url)
 
-                            try:
-                                for book_page_url in search_tree.xpath(
-                                    '//a[@class="library-title"]/@href'
-                                ):
+                            # Debug print to verify content
+                            print(f"Processing {search_url}")
+
+                            book_page_urls_on_page = search_tree.xpath('//a[@class="library-title"]/@href')
+                            if book_page_urls_on_page:
+                                for book_page_url in book_page_urls_on_page:
                                     book_page_urls.append(book_page_url)
                                     f.write(book_page_url + "\n")
-                            except IndexError:
+                            else:
                                 failed_search_urls.append(search_url)
-                                print(f"Request failed for {search_url}")
+                                print(f"No book page URLs found for {search_url}")
                         else:
                             failed_search_urls.append(search_url)
                             print(
                                 f"Request failed for {search_url}: status code [{search_r.status_code}]"
                             )
+
 
                 search_urls = failed_search_urls
 
@@ -169,4 +176,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    url = "https://www.smashwords.com/books/category/1/downloads/0/free/medium"
+    main(url)
